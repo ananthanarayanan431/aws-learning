@@ -4,9 +4,9 @@ A task/todo app used for learning AWS deployment.
 
 | Layer    | Stack                                                                 |
 | -------- | --------------------------------------------------------------------- |
-| Backend  | FastAPI, SQLAlchemy 2, Alembic, PostgreSQL 16, managed with [uv](https://docs.astral.sh/uv/) |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4                            |
-| Infra    | Docker Compose (db + backend + frontend)                              |
+| Backend  | FastAPI (async), SQLAlchemy 2 + asyncpg, Alembic, PostgreSQL 16, managed with [uv](https://docs.astral.sh/uv/) |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4 (served by nginx in Docker) |
+| Infra    | Docker Compose (db, one-shot migrate job, backend, frontend)          |
 
 ```
 .
@@ -37,25 +37,38 @@ Optionally copy `backend/.env.example` to `backend/.env` to override settings.
 ## Quick start (everything in Docker)
 
 ```bash
-make up     # build and start db, backend, frontend
+cp .env.example .env    # set POSTGRES_PASSWORD
+make up
+```
+
+- App: http://localhost:8080 (nginx serves the built frontend and proxies `/api` to the backend)
+- API: http://localhost:8000 (loopback only)
+- A one-shot `migrate` service runs `alembic upgrade head` and the backend starts only after it succeeds, so scaling the backend never races on migrations.
+- Interactive docs (`/docs`) are disabled when `ENVIRONMENT=production`, which the backend image sets by default.
+
+```bash
 make logs
 make down
 ```
 
-Migrations run automatically when the backend container starts.
-
 ## Configuration
 
-Read from environment variables or `backend/.env` ([config.py](backend/app/config.py)):
+Backend settings come from environment variables or `backend/.env` ([config.py](backend/app/config.py)):
 
-| Variable       | Default                                            | Purpose                  |
-| -------------- | -------------------------------------------------- | ------------------------ |
-| `DATABASE_URL` | `postgresql+psycopg2://todo:todo@localhost:5433/todo` | SQLAlchemy connection URL |
-| `CORS_ORIGINS` | `["http://localhost:5173"]`                        | Allowed browser origins  |
+| Variable          | Default                                                | Purpose                                   |
+| ----------------- | ------------------------------------------------------ | ----------------------------------------- |
+| `ENVIRONMENT`     | `development`                                          | `production` disables `/docs` and `/redoc` |
+| `LOG_LEVEL`       | `INFO`                                                 | Python log level                          |
+| `DATABASE_URL`    | `postgresql+asyncpg://todo:todo@localhost:5433/todo`   | Async SQLAlchemy URL (must use `asyncpg`) |
+| `DB_POOL_SIZE`    | `10`                                                   | Connections per worker                    |
+| `DB_MAX_OVERFLOW` | `10`                                                   | Extra burst connections per worker        |
+| `CORS_ORIGINS`    | `["http://localhost:5173"]`                            | Allowed browser origins                   |
 
-The frontend reads `VITE_PROXY_TARGET` (default `http://localhost:8000`) for the dev proxy.
+Docker Compose reads the root `.env` (see [.env.example](.env.example)): `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `CORS_ORIGINS`, `WEB_CONCURRENCY` (uvicorn workers), `LOG_LEVEL`. Total DB connections is roughly `WEB_CONCURRENCY x (DB_POOL_SIZE + DB_MAX_OVERFLOW)`.
 
-> **Port note:** Postgres is published on host port **5433**, not 5432, so it doesn't clash with a Postgres already running on your machine. Inside Docker the backend connects to `db:5432`.
+The frontend dev server reads `VITE_PROXY_TARGET` (default `http://localhost:8000`).
+
+> **Port note:** Postgres is published on `127.0.0.1:5433` (not 5432) so it doesn't clash with a Postgres already running on your machine. Inside Docker the backend connects to `db:5432`.
 
 ## Backend
 
@@ -95,7 +108,7 @@ All routes are under `/api/v1` and return a `{ success, message, data, meta }` e
 | Categories | `GET /categories`, `POST /categories`, `DELETE /categories/{id}`     |
 | Tags       | `GET /tags`, `POST /tags`, `DELETE /tags/{id}`                       |
 
-Interactive docs: `/docs` (Swagger) and `/redoc`.
+Interactive docs (`/docs`, `/redoc`) are available outside production.
 
 ### Tests
 
@@ -103,7 +116,7 @@ Interactive docs: `/docs` (Swagger) and `/redoc`.
 make test
 ```
 
-Tests run against in-memory SQLite, so no database is needed.
+Tests are async (pytest-asyncio + httpx) and run against in-memory SQLite via aiosqlite, so no database is needed.
 
 ## Frontend
 
@@ -125,6 +138,7 @@ Run `make help` for the full list.
 | `db-reset` / `db-shell`       | Wipe and re-migrate / open psql                |
 | `migrate` / `migration m=""`  | Apply / autogenerate migrations                |
 | `downgrade`                   | Roll back one migration                        |
-| `test` / `lint` / `build`     | Backend tests / frontend lint / frontend build |
+| `test` / `lint` / `format`    | Backend tests / ruff + oxlint / ruff auto-fix  |
+| `build`                       | Frontend production build                      |
 | `up` / `down` / `logs` / `ps` | Full stack in Docker                           |
 | `clean`                       | Remove caches and build output                 |
