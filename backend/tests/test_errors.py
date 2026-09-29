@@ -66,6 +66,14 @@ async def test_connection_failure_returns_503(client, method, path, body):
 
 
 @pytest.mark.parametrize(("method", "path", "body"), ENDPOINTS)
+async def test_unreachable_server_os_error_returns_503(client, method, path, body):
+    use_failing_db(ConnectionRefusedError(61, "Connection refused"))
+    r = await client.request(method, API + path, json=body)
+    assert r.status_code == 503
+    assert r.json()["error"]["code"] == "DATABASE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(("method", "path", "body"), ENDPOINTS)
 async def test_generic_database_error_returns_500(client, method, path, body):
     use_failing_db(SQLAlchemyError("boom"))
     r = await client.request(method, API + path, json=body)

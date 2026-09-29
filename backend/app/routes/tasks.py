@@ -2,11 +2,11 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.errors import db_failure
+from app.errors import DB_ERRORS, db_failure
 from app.logging import get_logger
 from app.models import Category, Tag, Task, TaskPriority, TaskStatus
 from app.responses import BadRequest, Conflict, NotFound, success
@@ -84,7 +84,7 @@ async def list_tasks(
     try:
         result = await db.scalars(q.order_by(Task.id.desc()).limit(limit).offset(offset))
         rows = result.unique().all()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "list tasks", exc) from exc
     return success(
         [TaskOut.model_validate(r) for r in rows],
@@ -113,7 +113,7 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
         await db.rollback()
         log.warning("task_create_integrity_error", error=str(exc.orig))
         raise Conflict("A referenced category, tag or parent task no longer exists") from exc
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "create task", exc) from exc
     log.info("task_created", task_id=task.id, parent_id=task.parent_id, status=task.status.value)
     return success(TaskOut.model_validate(task), "Task created", status_code=201)
@@ -123,7 +123,7 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
 async def get_task(task_id: int, db: AsyncSession = Depends(get_db)):
     try:
         task = await get_task_or_404(db, task_id)
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "fetch task", exc) from exc
     return success(TaskOut.model_validate(task))
 
@@ -148,7 +148,7 @@ async def update_task(task_id: int, body: TaskUpdate, db: AsyncSession = Depends
         await db.rollback()
         log.warning("task_update_integrity_error", task_id=task_id, error=str(exc.orig))
         raise Conflict("A referenced category or tag no longer exists") from exc
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "update task", exc) from exc
     log.info("task_updated", task_id=task.id, fields=sorted(changes))
     return success(TaskOut.model_validate(task), "Task updated")
@@ -159,7 +159,7 @@ async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
     try:
         await db.delete(await get_task_or_404(db, task_id))
         await db.commit()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "delete task", exc) from exc
     log.info("task_deleted", task_id=task_id)
     return success(None, "Task deleted")

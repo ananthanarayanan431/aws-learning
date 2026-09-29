@@ -11,13 +11,18 @@ from app.responses import AppError, InternalError, ServiceUnavailable, error
 log = get_logger(__name__)
 
 
-def _is_connectivity_problem(exc: SQLAlchemyError) -> bool:
-    if isinstance(exc, OperationalError | InterfaceError | PoolTimeoutError):
+# What a database call can raise: SQLAlchemy errors, plus raw OS-level errors (asyncpg raises
+# ConnectionRefusedError, socket timeouts, ... unwrapped when it cannot reach the server).
+DB_ERRORS = (SQLAlchemyError, OSError)
+
+
+def _is_connectivity_problem(exc: Exception) -> bool:
+    if isinstance(exc, OSError | OperationalError | InterfaceError | PoolTimeoutError):
         return True
     return isinstance(exc, DBAPIError) and exc.connection_invalidated
 
 
-def to_app_error(action: str, exc: SQLAlchemyError) -> AppError:
+def to_app_error(action: str, exc: Exception) -> AppError:
     """Logs a database failure and maps it to a safe client-facing error (no internals leak)."""
     log.error("database_error", action=action, error=type(exc).__name__, exc_info=exc)
     if _is_connectivity_problem(exc):
@@ -25,7 +30,7 @@ def to_app_error(action: str, exc: SQLAlchemyError) -> AppError:
     return InternalError(f"Could not {action}", "DATABASE_ERROR")
 
 
-async def db_failure(db: AsyncSession, action: str, exc: SQLAlchemyError) -> AppError:
+async def db_failure(db: AsyncSession, action: str, exc: Exception) -> AppError:
     """Rolls the session back, then returns the AppError for the caller to raise."""
     try:
         await db.rollback()

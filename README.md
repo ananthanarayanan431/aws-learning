@@ -120,6 +120,21 @@ Logging uses [structlog](https://www.structlog.org) ([app/logging.py](backend/ap
 - Routes log business events with structured fields, for example `task_created task_id=2`. Get a logger with `from app.logging import get_logger; log = get_logger(__name__)`.
 - Unhandled exceptions are logged with a traceback and return a generic 500; details never reach the client.
 
+### Error handling
+
+Every endpoint wraps its database work in `try/except` and returns the standard `{success: false, message, error: {code, details}}` envelope:
+
+| Situation                                              | Status | Code                                |
+| ------------------------------------------------------ | ------ | ----------------------------------- |
+| Bad input                                              | 422    | `VALIDATION_ERROR`                  |
+| Missing resource                                       | 404    | `NOT_FOUND`                         |
+| Duplicate name, or a referenced row deleted mid-request | 409    | `CONFLICT`                          |
+| Database unreachable, connection lost, pool timeout    | 503    | `DATABASE_UNAVAILABLE`              |
+| Any other database error                               | 500    | `DATABASE_ERROR`                    |
+| Anything unexpected                                    | 500    | `INTERNAL_ERROR`                    |
+
+Database failures roll the session back and are logged with a traceback, but the response never contains driver messages or SQL. The mapping lives in `db_failure` in [app/errors.py](backend/app/errors.py); a global handler there is a safety net for anything that escapes an endpoint.
+
 ### Tests
 
 ```bash

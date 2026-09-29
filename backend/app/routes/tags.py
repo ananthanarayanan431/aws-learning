@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.errors import db_failure
+from app.errors import DB_ERRORS, db_failure
 from app.logging import get_logger
 from app.models import Tag
 from app.responses import Conflict, NotFound, success
@@ -25,7 +25,7 @@ ERRORS = {
 async def list_tags(db: AsyncSession = Depends(get_db)):
     try:
         rows = (await db.scalars(select(Tag).order_by(Tag.name))).all()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "list tags", exc) from exc
     return success([TagOut.model_validate(r) for r in rows])
 
@@ -41,7 +41,7 @@ async def create_tag(body: TagIn, db: AsyncSession = Depends(get_db)):
         await db.rollback()
         log.warning("tag_conflict", name=body.name)
         raise Conflict(f"Tag '{body.name}' already exists") from exc
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "create tag", exc) from exc
     log.info("tag_created", tag_id=tag.id, name=tag.name)
     return success(TagOut.model_validate(tag), "Tag created", status_code=201)
@@ -55,7 +55,7 @@ async def delete_tag(tag_id: int, db: AsyncSession = Depends(get_db)):
             raise NotFound("Tag")
         await db.delete(tag)
         await db.commit()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "delete tag", exc) from exc
     log.info("tag_deleted", tag_id=tag_id)
     return success(None, "Tag deleted")

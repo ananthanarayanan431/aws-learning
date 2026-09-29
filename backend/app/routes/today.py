@@ -2,11 +2,10 @@ from datetime import date
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, update
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.errors import db_failure
+from app.errors import DB_ERRORS, db_failure
 from app.logging import get_logger
 from app.models import Task, TaskStatus
 from app.responses import success
@@ -37,7 +36,7 @@ async def today_view(db: AsyncSession = Depends(get_db)):
     try:
         result = await db.scalars(q.order_by(Task.planned_date, Task.id))
         rows = result.unique().all()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "load today view", exc) from exc
     return success(
         [TaskOut.model_validate(r) for r in rows],
@@ -54,7 +53,7 @@ async def carry_over(db: AsyncSession = Depends(get_db)):
             update(Task).where(*_overdue_planned(today)).values(planned_date=today)
         )
         await db.commit()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "carry over tasks", exc) from exc
     moved = result.rowcount
     log.info("carry_over", moved=moved, to=today.isoformat())

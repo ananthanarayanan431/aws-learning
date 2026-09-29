@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.errors import db_failure
+from app.errors import DB_ERRORS, db_failure
 from app.logging import get_logger
 from app.models import Category
 from app.responses import Conflict, NotFound, success
@@ -25,7 +25,7 @@ ERRORS = {
 async def list_categories(db: AsyncSession = Depends(get_db)):
     try:
         rows = (await db.scalars(select(Category).order_by(Category.name))).all()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "list categories", exc) from exc
     return success([CategoryOut.model_validate(r) for r in rows])
 
@@ -41,7 +41,7 @@ async def create_category(body: CategoryIn, db: AsyncSession = Depends(get_db)):
         await db.rollback()
         log.warning("category_conflict", name=body.name)
         raise Conflict(f"Category '{body.name}' already exists") from exc
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "create category", exc) from exc
     log.info("category_created", category_id=cat.id, name=cat.name)
     return success(CategoryOut.model_validate(cat), "Category created", status_code=201)
@@ -55,7 +55,7 @@ async def delete_category(category_id: int, db: AsyncSession = Depends(get_db)):
             raise NotFound("Category")
         await db.delete(cat)
         await db.commit()
-    except SQLAlchemyError as exc:
+    except DB_ERRORS as exc:
         raise await db_failure(db, "delete category", exc) from exc
     log.info("category_deleted", category_id=category_id)
     return success(None, "Category deleted")
