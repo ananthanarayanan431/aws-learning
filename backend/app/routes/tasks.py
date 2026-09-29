@@ -1,8 +1,8 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Category, Tag, Task, TaskPriority, TaskStatus
@@ -17,36 +17,36 @@ ERRORS = {
 }
 
 
-def _load_tags(db: Session, tag_ids: list[int]) -> list[Tag]:
+async def _load_tags(db: AsyncSession, tag_ids: list[int]) -> list[Tag]:
     ids = set(tag_ids)
-    tags = list(db.scalars(select(Tag).where(Tag.id.in_(ids)))) if ids else []
+    tags = list(await db.scalars(select(Tag).where(Tag.id.in_(ids)))) if ids else []
     if len(tags) != len(ids):
         raise BadRequest("One or more tag_ids do not exist", "INVALID_TAG")
     return tags
 
 
-def _check_category(db: Session, category_id: int | None) -> None:
-    if category_id is not None and not db.get(Category, category_id):
+async def _check_category(db: AsyncSession, category_id: int | None) -> None:
+    if category_id is not None and not await db.get(Category, category_id):
         raise BadRequest("category_id does not exist", "INVALID_CATEGORY")
 
 
 def _sync_completion(task: Task) -> None:
     if task.status == TaskStatus.done:
-        task.completed_at = task.completed_at or datetime.now(timezone.utc)
+        task.completed_at = task.completed_at or datetime.now(UTC)
     else:
         task.completed_at = None
 
 
-def get_task_or_404(db: Session, task_id: int) -> Task:
-    task = db.get(Task, task_id)
+async def get_task_or_404(db: AsyncSession, task_id: int) -> Task:
+    task = await db.get(Task, task_id)
     if not task:
         raise NotFound("Task")
     return task
 
 
 @router.get("", response_model=SuccessResponse[list[TaskOut]])
-def list_tasks(
-    db: Session = Depends(get_db),
+async def list_tasks(
+    db: AsyncSession = Depends(get_db),
     status: TaskStatus | None = None,
     priority: TaskPriority | None = None,
     category_id: int | None = None,
@@ -72,8 +72,8 @@ def list_tasks(
     if planned_date:
         q = q.where(Task.planned_date == planned_date)
     if search:
-        q = q.where(Task.title.ilike(f"%{search}%"))
-    rows = db.scalars(q.order_by(Task.id.desc()).limit(limit).offset(offset)).unique().all()
+        q = q.where(Task.title.icontains(search, autoescape=True))
+    rows = (await db.scalars(q.order_by(Task.id.desc()).limit(limit).offset(offset))).unique().all()
     return success(
         [TaskOut.model_validate(r) for r in rows],
         meta={"limit": limit, "offset": offset, "count": len(rows)},
@@ -81,45 +81,47 @@ def list_tasks(
 
 
 @router.post("", response_model=SuccessResponse[TaskOut], status_code=201, responses=ERRORS)
-def create_task(body: TaskCreate, db: Session = Depends(get_db)):
-    _check_category(db, body.category_id)
+async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
+    await _check_category(db, body.category_id)
     if body.parent_id is not None:
-        parent = db.get(Task, body.parent_id)
+        parent = await db.get(Task, body.parent_id)
         if not parent:
             raise BadRequest("parent_id does not exist", "INVALID_PARENT")
         if parent.parent_id is not None:
             raise BadRequest("Subtasks cannot be nested more than one level", "INVALID_PARENT")
-    task = Task(**body.model_dump(exclude={"tag_ids"}), tags=_load_tags(db, body.tag_ids))
+    task = Task(**body.model_dump(exclude={"tag_ids"}), tags=await _load_tags(db, body.tag_ids))
     _sync_completion(task)
     db.add(task)
-    db.commit()
+    await db.commit()
+    await db.refresh(task)
     return success(TaskOut.model_validate(task), "Task created", status_code=201)
 
 
 @router.get("/{task_id}", response_model=SuccessResponse[TaskOut], responses=ERRORS)
-def get_task(task_id: int, db: Session = Depends(get_db)):
-    return success(TaskOut.model_validate(get_task_or_404(db, task_id)))
+async def get_task(task_id: int, db: AsyncSession = Depends(get_db)):
+    return success(TaskOut.model_validate(await get_task_or_404(db, task_id)))
 
 
 @router.patch("/{task_id}", response_model=SuccessResponse[TaskOut], responses=ERRORS)
-def update_task(task_id: int, body: TaskUpdate, db: Session = Depends(get_db)):
-    task = get_task_or_404(db, task_id)
+async def update_task(task_id: int, body: TaskUpdate, db: AsyncSession = Depends(get_db)):
+    task = await get_task_or_404(db, task_id)
     changes = body.model_dump(exclude_unset=True)
     if "title" in changes and changes["title"] is None:
         raise BadRequest("title cannot be null")
     if "category_id" in changes:
-        _check_category(db, changes["category_id"])
+        await _check_category(db, changes["category_id"])
     if "tag_ids" in changes:
-        task.tags = _load_tags(db, changes.pop("tag_ids") or [])
+        task.tags = await _load_tags(db, changes.pop("tag_ids") or [])
     for field, value in changes.items():
         setattr(task, field, value)
     _sync_completion(task)
-    db.commit()
+    await db.commit()
+    await db.refresh(task)
     return success(TaskOut.model_validate(task), "Task updated")
 
 
 @router.delete("/{task_id}", response_model=SuccessResponse[None], responses=ERRORS)
-def delete_task(task_id: int, db: Session = Depends(get_db)):
-    db.delete(get_task_or_404(db, task_id))
-    db.commit()
+async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
+    await db.delete(await get_task_or_404(db, task_id))
+    await db.commit()
     return success(None, "Task deleted")

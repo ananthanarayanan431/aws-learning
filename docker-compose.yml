@@ -1,42 +1,53 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: todo
-      POSTGRES_PASSWORD: todo
-      POSTGRES_DB: todo
+      POSTGRES_USER: ${POSTGRES_USER:-todo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-todo}
+      POSTGRES_DB: ${POSTGRES_DB:-todo}
     ports:
-      - "5433:5432"
+      # Loopback only, for local tooling (make migrate, make db-shell). 5433 avoids clashing with a local Postgres.
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U todo -d todo"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  backend:
+  # One-shot job: applies migrations, then exits. Backend starts only after it succeeds,
+  # so scaling the backend never races on migrations.
+  migrate:
     build: ./backend
+    command: ["alembic", "upgrade", "head"]
     environment:
-      DATABASE_URL: postgresql+psycopg2://todo:todo@db:5432/todo
-      CORS_ORIGINS: '["http://localhost:5173"]'
-    ports:
-      - "8000:8000"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-todo}:${POSTGRES_PASSWORD:-todo}@db:5432/${POSTGRES_DB:-todo}
     depends_on:
       db:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health/db')"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+    restart: "no"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-todo}:${POSTGRES_PASSWORD:-todo}@db:5432/${POSTGRES_DB:-todo}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:8080"]}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
   frontend:
     build: ./frontend
-    environment:
-      VITE_PROXY_TARGET: http://backend:8000
+    restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "8080:80"
     depends_on:
       - backend
 

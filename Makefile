@@ -5,7 +5,7 @@ FRONTEND := frontend
 .PHONY: help install backend-install frontend-install \
         db-up db-down db-reset db-shell \
         migrate migration downgrade migration-history \
-        backend frontend test lint build \
+        backend frontend test lint lint-backend format build \
         up down logs ps clean
 
 help: ## Show this help
@@ -60,8 +60,14 @@ frontend: ## Run Vite dev server
 test: ## Run backend tests
 	cd $(BACKEND) && uv run pytest
 
-lint: ## Lint frontend
+lint: lint-backend ## Lint backend (ruff) and frontend (oxlint)
 	cd $(FRONTEND) && npm run lint
+
+lint-backend: ## Lint + format check backend
+	cd $(BACKEND) && uv run ruff check . && uv run ruff format --check .
+
+format: ## Auto-fix and format backend
+	cd $(BACKEND) && uv run ruff check --fix . && uv run ruff format .
 
 build: ## Build frontend
 	cd $(FRONTEND) && npm run build

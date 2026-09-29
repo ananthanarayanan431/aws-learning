@@ -49,17 +49,19 @@ class Task(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    status: Mapped[TaskStatus] = mapped_column(Enum(TaskStatus), default=TaskStatus.todo)
+    status: Mapped[TaskStatus] = mapped_column(
+        Enum(TaskStatus), default=TaskStatus.todo, index=True
+    )
     priority: Mapped[TaskPriority] = mapped_column(Enum(TaskPriority), default=TaskPriority.medium)
-    due_date: Mapped[date | None] = mapped_column(Date, default=None)
+    due_date: Mapped[date | None] = mapped_column(Date, default=None, index=True)
     # The day the task is planned to be worked on; drives the "today" view.
-    planned_date: Mapped[date | None] = mapped_column(Date, default=None)
+    planned_date: Mapped[date | None] = mapped_column(Date, default=None, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     category_id: Mapped[int | None] = mapped_column(
-        ForeignKey("categories.id", ondelete="SET NULL"), default=None
+        ForeignKey("categories.id", ondelete="SET NULL"), default=None, index=True
     )
     parent_id: Mapped[int | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), default=None
+        ForeignKey("tasks.id", ondelete="CASCADE"), default=None, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -69,5 +71,5 @@ class Task(Base):
     category: Mapped[Category | None] = relationship(lazy="joined")
     tags: Mapped[list[Tag]] = relationship(secondary=task_tags, lazy="selectin")
     subtasks: Mapped[list["Task"]] = relationship(
-        lazy="selectin", cascade="all, delete-orphan", order_by="Task.id"
+        lazy="selectin", join_depth=2, cascade="all, delete-orphan", order_by="Task.id"
     )
