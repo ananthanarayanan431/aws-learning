@@ -50,11 +50,11 @@ migration-history: ## Show migration history
 	cd $(BACKEND) && uv run alembic history --verbose
 
 ## ---- Run locally ----
-backend: db-up migrate ## Run API with reload (starts DB, migrates)
-	cd $(BACKEND) && uv run uvicorn app.main:app --reload --port 8000
+backend: db-up ## Start DB, then run backend/run.sh (migrates, then serves with reload)
+	./$(BACKEND)/run.sh
 
-frontend: ## Run Vite dev server
-	cd $(FRONTEND) && npm run dev
+frontend: ## Run frontend/run.sh (Vite dev server)
+	./$(FRONTEND)/run.sh
 
 ## ---- Quality ----
 test: ## Run backend tests

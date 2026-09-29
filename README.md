@@ -26,8 +26,8 @@ A task/todo app used for learning AWS deployment.
 
 ```bash
 make install    # uv sync (backend) + npm install (frontend)
-make backend    # starts Postgres, applies migrations, runs API on :8000 with reload
-make frontend   # Vite dev server on :5173 (proxies /api to :8000)
+make backend    # starts Postgres, then backend/run.sh: applies migrations, runs API on :8000 with reload
+make frontend   # frontend/run.sh: Vite dev server on :5173 (proxies /api to :8000)
 ```
 
 Open http://localhost:5173. API docs are at http://localhost:8000/docs.
