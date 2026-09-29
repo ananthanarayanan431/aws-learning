@@ -27,6 +27,14 @@ def Conflict(message: str) -> AppError:
     return AppError(409, "CONFLICT", message)
 
 
+def ServiceUnavailable(message: str, code: str = "SERVICE_UNAVAILABLE") -> AppError:
+    return AppError(503, code, message)
+
+
+def InternalError(message: str, code: str = "INTERNAL_ERROR") -> AppError:
+    return AppError(500, code, message)
+
+
 def success(
     data: Any = None, message: str = "OK", meta: dict | None = None, status_code: int = 200
 ):

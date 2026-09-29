@@ -1,11 +1,37 @@
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.logging import get_logger
-from app.responses import AppError, error
+from app.responses import AppError, InternalError, ServiceUnavailable, error
 
 log = get_logger(__name__)
+
+
+def _is_connectivity_problem(exc: SQLAlchemyError) -> bool:
+    if isinstance(exc, OperationalError | InterfaceError | PoolTimeoutError):
+        return True
+    return isinstance(exc, DBAPIError) and exc.connection_invalidated
+
+
+def to_app_error(action: str, exc: SQLAlchemyError) -> AppError:
+    """Logs a database failure and maps it to a safe client-facing error (no internals leak)."""
+    log.error("database_error", action=action, error=type(exc).__name__, exc_info=exc)
+    if _is_connectivity_problem(exc):
+        return ServiceUnavailable("Database is temporarily unavailable", "DATABASE_UNAVAILABLE")
+    return InternalError(f"Could not {action}", "DATABASE_ERROR")
+
+
+async def db_failure(db: AsyncSession, action: str, exc: SQLAlchemyError) -> AppError:
+    """Rolls the session back, then returns the AppError for the caller to raise."""
+    try:
+        await db.rollback()
+    except SQLAlchemyError:
+        log.warning("rollback_failed", action=action)
+    return to_app_error(action, exc)
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -30,6 +56,12 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_: Request, exc: StarletteHTTPException):
         return error(exc.status_code, f"HTTP_{exc.status_code}", str(exc.detail))
+
+    @app.exception_handler(SQLAlchemyError)
+    async def database_error(_: Request, exc: SQLAlchemyError):
+        # Safety net for database errors that escape an endpoint's own handling.
+        err = to_app_error("complete the request", exc)
+        return error(err.status_code, err.code, err.message)
 
     @app.exception_handler(Exception)
     async def unhandled(_: Request, exc: Exception):

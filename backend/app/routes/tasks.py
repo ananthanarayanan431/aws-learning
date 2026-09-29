@@ -2,12 +2,14 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.errors import db_failure
 from app.logging import get_logger
 from app.models import Category, Tag, Task, TaskPriority, TaskStatus
-from app.responses import BadRequest, NotFound, success
+from app.responses import BadRequest, Conflict, NotFound, success
 from app.schemas import ErrorResponse, SuccessResponse, TaskCreate, TaskOut, TaskUpdate
 
 log = get_logger(__name__)
@@ -15,7 +17,10 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 ERRORS = {
     400: {"model": ErrorResponse},
     404: {"model": ErrorResponse},
+    409: {"model": ErrorResponse},
     422: {"model": ErrorResponse},
+    500: {"model": ErrorResponse},
+    503: {"model": ErrorResponse},
 }
 
 
@@ -76,7 +81,11 @@ async def list_tasks(
         q = q.where(Task.planned_date == planned_date)
     if search:
         q = q.where(Task.title.icontains(search, autoescape=True))
-    rows = (await db.scalars(q.order_by(Task.id.desc()).limit(limit).offset(offset))).unique().all()
+    try:
+        result = await db.scalars(q.order_by(Task.id.desc()).limit(limit).offset(offset))
+        rows = result.unique().all()
+    except SQLAlchemyError as exc:
+        raise await db_failure(db, "list tasks", exc) from exc
     return success(
         [TaskOut.model_validate(r) for r in rows],
         meta={"limit": limit, "offset": offset, "count": len(rows)},
@@ -85,50 +94,72 @@ async def list_tasks(
 
 @router.post("", response_model=SuccessResponse[TaskOut], status_code=201, responses=ERRORS)
 async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
-    await _check_category(db, body.category_id)
-    if body.parent_id is not None:
-        parent = await db.get(Task, body.parent_id)
-        if not parent:
-            raise BadRequest("parent_id does not exist", "INVALID_PARENT")
-        if parent.parent_id is not None:
-            log.warning("subtask_nesting_rejected", parent_id=body.parent_id)
-            raise BadRequest("Subtasks cannot be nested more than one level", "INVALID_PARENT")
-    task = Task(**body.model_dump(exclude={"tag_ids"}), tags=await _load_tags(db, body.tag_ids))
-    _sync_completion(task)
-    db.add(task)
-    await db.commit()
-    await db.refresh(task)
+    try:
+        await _check_category(db, body.category_id)
+        if body.parent_id is not None:
+            parent = await db.get(Task, body.parent_id)
+            if not parent:
+                raise BadRequest("parent_id does not exist", "INVALID_PARENT")
+            if parent.parent_id is not None:
+                log.warning("subtask_nesting_rejected", parent_id=body.parent_id)
+                raise BadRequest("Subtasks cannot be nested more than one level", "INVALID_PARENT")
+        task = Task(**body.model_dump(exclude={"tag_ids"}), tags=await _load_tags(db, body.tag_ids))
+        _sync_completion(task)
+        db.add(task)
+        await db.commit()
+        await db.refresh(task)
+    except IntegrityError as exc:
+        # A referenced category/tag/parent was deleted between the check and the insert.
+        await db.rollback()
+        log.warning("task_create_integrity_error", error=str(exc.orig))
+        raise Conflict("A referenced category, tag or parent task no longer exists") from exc
+    except SQLAlchemyError as exc:
+        raise await db_failure(db, "create task", exc) from exc
     log.info("task_created", task_id=task.id, parent_id=task.parent_id, status=task.status.value)
     return success(TaskOut.model_validate(task), "Task created", status_code=201)
 
 
 @router.get("/{task_id}", response_model=SuccessResponse[TaskOut], responses=ERRORS)
 async def get_task(task_id: int, db: AsyncSession = Depends(get_db)):
-    return success(TaskOut.model_validate(await get_task_or_404(db, task_id)))
+    try:
+        task = await get_task_or_404(db, task_id)
+    except SQLAlchemyError as exc:
+        raise await db_failure(db, "fetch task", exc) from exc
+    return success(TaskOut.model_validate(task))
 
 
 @router.patch("/{task_id}", response_model=SuccessResponse[TaskOut], responses=ERRORS)
 async def update_task(task_id: int, body: TaskUpdate, db: AsyncSession = Depends(get_db)):
-    task = await get_task_or_404(db, task_id)
     changes = body.model_dump(exclude_unset=True)
     if "title" in changes and changes["title"] is None:
         raise BadRequest("title cannot be null")
-    if "category_id" in changes:
-        await _check_category(db, changes["category_id"])
-    if "tag_ids" in changes:
-        task.tags = await _load_tags(db, changes.pop("tag_ids") or [])
-    for field, value in changes.items():
-        setattr(task, field, value)
-    _sync_completion(task)
-    await db.commit()
-    await db.refresh(task)
+    try:
+        task = await get_task_or_404(db, task_id)
+        if "category_id" in changes:
+            await _check_category(db, changes["category_id"])
+        if "tag_ids" in changes:
+            task.tags = await _load_tags(db, changes.pop("tag_ids") or [])
+        for field, value in changes.items():
+            setattr(task, field, value)
+        _sync_completion(task)
+        await db.commit()
+        await db.refresh(task)
+    except IntegrityError as exc:
+        await db.rollback()
+        log.warning("task_update_integrity_error", task_id=task_id, error=str(exc.orig))
+        raise Conflict("A referenced category or tag no longer exists") from exc
+    except SQLAlchemyError as exc:
+        raise await db_failure(db, "update task", exc) from exc
     log.info("task_updated", task_id=task.id, fields=sorted(changes))
     return success(TaskOut.model_validate(task), "Task updated")
 
 
 @router.delete("/{task_id}", response_model=SuccessResponse[None], responses=ERRORS)
 async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
-    await db.delete(await get_task_or_404(db, task_id))
-    await db.commit()
+    try:
+        await db.delete(await get_task_or_404(db, task_id))
+        await db.commit()
+    except SQLAlchemyError as exc:
+        raise await db_failure(db, "delete task", exc) from exc
     log.info("task_deleted", task_id=task_id)
     return success(None, "Task deleted")
