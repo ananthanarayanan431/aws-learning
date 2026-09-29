@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { ApiError } from './api/client'
-import type { Category, Task, TaskInput } from './types'
+import type { Task, TaskInput } from './types'
 
 export function errorMessage(e: unknown): string {
   return e instanceof ApiError || e instanceof Error ? e.message : 'Unexpected error'
@@ -48,12 +48,4 @@ export function useTasks(load: () => Promise<Task[]>) {
     remove: (t: Task) => run(() => api.deleteTask(t.id)),
     addSubtask: (parent: Task, title: string) => run(() => api.createTask({ title, parent_id: parent.id })),
   }
-}
-
-export function useCategories() {
-  const [categories, setCategories] = useState<Category[]>([])
-  useEffect(() => {
-    api.listCategories().then(setCategories, () => {})
-  }, [])
-  return categories
 }

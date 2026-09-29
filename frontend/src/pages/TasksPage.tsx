@@ -2,7 +2,10 @@ import { useCallback, useState } from 'react'
 import { api } from '../api'
 import { TaskForm } from '../components/TaskForm'
 import { TaskList } from '../components/TaskList'
-import { useCategories, useTasks } from '../hooks'
+import { CategoryManager } from '../components/CategoryManager'
+import { useTasks } from '../hooks'
+import { useCategories } from '../store/categories'
+import type { Category } from '../types'
 
 const sel = 'rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm'
 
@@ -11,7 +14,7 @@ export function TasksPage() {
   const [priority, setPriority] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [search, setSearch] = useState('')
-  const categories = useCategories()
+  const { categories, addCategory, removeCategory } = useCategories()
 
   const load = useCallback(() => {
     const params: Record<string, string> = {}
@@ -22,11 +25,17 @@ export function TasksPage() {
     return api.listTasks(params)
   }, [status, priority, categoryId, search])
 
-  const { tasks, loading, error, create, toggle, remove, addSubtask } = useTasks(load)
+  const { tasks, loading, error, reload, create, toggle, remove, addSubtask } = useTasks(load)
+
+  async function deleteCategory(c: Category) {
+    await removeCategory(c.id)
+    if (categoryId === String(c.id)) setCategoryId('')
+    await reload() // tasks that had this category now have none
+  }
 
   return (
     <div className="space-y-4">
-      <TaskForm categories={categories} onSubmit={create} />
+      <TaskForm categories={categories} onCreateCategory={addCategory} onSubmit={create} />
       <div className="flex flex-wrap gap-2">
         <input className={sel} placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <select className={sel} value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -50,6 +59,7 @@ export function TasksPage() {
           ))}
         </select>
       </div>
+      <CategoryManager categories={categories} onDelete={deleteCategory} />
       {error && <p className="rounded bg-rose-50 p-2 text-sm text-rose-700">{error}</p>}
       {loading ? (
         <p className="text-sm text-slate-400">Loading…</p>

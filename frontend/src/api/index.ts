@@ -23,6 +23,7 @@ export const api = {
   listCategories: () => request<Category[]>('/categories').then((r) => r.data),
   createCategory: (name: string, color?: string) =>
     request<Category>('/categories', json('POST', { name, color })).then((r) => r.data),
+  deleteCategory: (id: number) => request<null>(`/categories/${id}`, json('DELETE')),
   listTags: () => request<Tag[]>('/tags').then((r) => r.data),
   createTag: (name: string) => request<Tag>('/tags', json('POST', { name })).then((r) => r.data),
 }

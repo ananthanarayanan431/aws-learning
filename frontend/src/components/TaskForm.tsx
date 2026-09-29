@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { errorMessage } from '../hooks'
 import type { Category, Priority, TaskInput } from '../types'
 
 interface Props {
   categories: Category[]
+  onCreateCategory: (name: string) => Promise<Category>
   defaultPlanned?: string
   onSubmit: (input: TaskInput) => Promise<void>
 }
@@ -10,13 +12,33 @@ interface Props {
 const PRIORITIES: Priority[] = ['low', 'medium', 'high', 'urgent']
 const field = 'rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none'
 
-export function TaskForm({ categories, defaultPlanned, onSubmit }: Props) {
+const NEW_CATEGORY = '__new__'
+
+export function TaskForm({ categories, onCreateCategory, defaultPlanned, onSubmit }: Props) {
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState<Priority>('medium')
   const [categoryId, setCategoryId] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [planned, setPlanned] = useState(defaultPlanned ?? '')
   const [busy, setBusy] = useState(false)
+  const [newCategory, setNewCategory] = useState<string | null>(null) // non-null while creating
+  const [categoryError, setCategoryError] = useState<string | null>(null)
+
+  // A category deleted elsewhere must not stay selected.
+  const selectedCategory = categories.some((c) => String(c.id) === categoryId) ? categoryId : ''
+
+  async function createCategory() {
+    const name = (newCategory ?? '').trim()
+    if (!name) return
+    try {
+      const created = await onCreateCategory(name)
+      setCategoryId(String(created.id))
+      setNewCategory(null)
+      setCategoryError(null)
+    } catch (e) {
+      setCategoryError(errorMessage(e))
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -26,7 +48,7 @@ export function TaskForm({ categories, defaultPlanned, onSubmit }: Props) {
       await onSubmit({
         title: title.trim(),
         priority,
-        category_id: categoryId ? Number(categoryId) : null,
+        category_id: selectedCategory ? Number(selectedCategory) : null,
         due_date: dueDate || null,
         planned_date: planned || null,
       })
@@ -52,14 +74,62 @@ export function TaskForm({ categories, defaultPlanned, onSubmit }: Props) {
             <option key={p}>{p}</option>
           ))}
         </select>
-        <select className={field} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-          <option value="">No category</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+        {newCategory === null ? (
+          <select
+            className={field}
+            value={selectedCategory}
+            onChange={(e) => {
+              if (e.target.value === NEW_CATEGORY) setNewCategory('')
+              else setCategoryId(e.target.value)
+            }}
+          >
+            <option value="">No category</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+            <option value={NEW_CATEGORY}>+ New category…</option>
+          </select>
+        ) : (
+          <span className="flex items-center gap-1">
+            <input
+              autoFocus
+              className={`${field} w-36`}
+              placeholder="Category name"
+              value={newCategory}
+              maxLength={100}
+              onChange={(e) => setNewCategory(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  createCategory()
+                } else if (e.key === 'Escape') {
+                  setNewCategory(null)
+                  setCategoryError(null)
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={!newCategory.trim()}
+              onClick={createCategory}
+              className="rounded-md bg-slate-800 px-2 py-1.5 text-xs font-medium text-white hover:bg-slate-900 disabled:opacity-50"
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNewCategory(null)
+                setCategoryError(null)
+              }}
+              className="px-1 text-xs text-slate-500 hover:text-slate-700"
+            >
+              Cancel
+            </button>
+          </span>
+        )}
         <label className="flex items-center gap-1 text-xs text-slate-500">
           Plan
           <input type="date" className={field} value={planned} onChange={(e) => setPlanned(e.target.value)} />
@@ -75,6 +145,7 @@ export function TaskForm({ categories, defaultPlanned, onSubmit }: Props) {
           Add
         </button>
       </div>
+      {categoryError && <p className="text-xs text-red-600">{categoryError}</p>}
     </form>
   )
 }
