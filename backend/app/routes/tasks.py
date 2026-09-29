@@ -5,10 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.logging import get_logger
 from app.models import Category, Tag, Task, TaskPriority, TaskStatus
 from app.responses import BadRequest, NotFound, success
 from app.schemas import ErrorResponse, SuccessResponse, TaskCreate, TaskOut, TaskUpdate
 
+log = get_logger(__name__)
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 ERRORS = {
     400: {"model": ErrorResponse},
@@ -21,6 +23,7 @@ async def _load_tags(db: AsyncSession, tag_ids: list[int]) -> list[Tag]:
     ids = set(tag_ids)
     tags = list(await db.scalars(select(Tag).where(Tag.id.in_(ids)))) if ids else []
     if len(tags) != len(ids):
+        log.warning("invalid_tag_ids", requested=sorted(ids), found=[t.id for t in tags])
         raise BadRequest("One or more tag_ids do not exist", "INVALID_TAG")
     return tags
 
@@ -88,12 +91,14 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
         if not parent:
             raise BadRequest("parent_id does not exist", "INVALID_PARENT")
         if parent.parent_id is not None:
+            log.warning("subtask_nesting_rejected", parent_id=body.parent_id)
             raise BadRequest("Subtasks cannot be nested more than one level", "INVALID_PARENT")
     task = Task(**body.model_dump(exclude={"tag_ids"}), tags=await _load_tags(db, body.tag_ids))
     _sync_completion(task)
     db.add(task)
     await db.commit()
     await db.refresh(task)
+    log.info("task_created", task_id=task.id, parent_id=task.parent_id, status=task.status.value)
     return success(TaskOut.model_validate(task), "Task created", status_code=201)
 
 
@@ -117,6 +122,7 @@ async def update_task(task_id: int, body: TaskUpdate, db: AsyncSession = Depends
     _sync_completion(task)
     await db.commit()
     await db.refresh(task)
+    log.info("task_updated", task_id=task.id, fields=sorted(changes))
     return success(TaskOut.model_validate(task), "Task updated")
 
 
@@ -124,4 +130,5 @@ async def update_task(task_id: int, body: TaskUpdate, db: AsyncSession = Depends
 async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(await get_task_or_404(db, task_id))
     await db.commit()
+    log.info("task_deleted", task_id=task_id)
     return success(None, "Task deleted")

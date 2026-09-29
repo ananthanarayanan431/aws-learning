@@ -5,10 +5,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.logging import get_logger
 from app.models import Task, TaskStatus
 from app.responses import success
 from app.schemas import CarryOverOut, SuccessResponse, TaskOut
 
+log = get_logger(__name__)
 router = APIRouter(prefix="/today", tags=["today"])
 
 
@@ -45,4 +47,5 @@ async def carry_over(db: AsyncSession = Depends(get_db)):
     )
     await db.commit()
     moved = result.rowcount
+    log.info("carry_over", moved=moved, to=today.isoformat())
     return success(CarryOverOut(moved=moved), f"Carried over {moved} task(s) to today")

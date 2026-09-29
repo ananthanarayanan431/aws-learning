@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     app_name: str = "Todo API"
     environment: str = "development"  # "production" disables the interactive docs
     log_level: str = "INFO"
+    log_json: bool | None = None  # None: JSON in production, colored console otherwise
     database_url: str = "postgresql+asyncpg://todo:todo@localhost:5433/todo"
     db_pool_size: int = 10
     db_max_overflow: int = 10

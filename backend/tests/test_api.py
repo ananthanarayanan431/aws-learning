@@ -131,3 +131,10 @@ async def test_today_view_and_carry_over(client):
         "data"
     ]
     assert {t["title"] for t in planned} == {"today", "late"}
+
+
+async def test_request_id_is_generated_and_echoed(client):
+    r = await client.get(f"{API}/health")
+    assert r.headers["x-request-id"]
+    r = await client.get(f"{API}/health", headers={"X-Request-ID": "abc123"})
+    assert r.headers["x-request-id"] == "abc123"

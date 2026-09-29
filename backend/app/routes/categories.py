@@ -4,10 +4,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.logging import get_logger
 from app.models import Category
 from app.responses import Conflict, NotFound, success
 from app.schemas import CategoryIn, CategoryOut, ErrorResponse, SuccessResponse
 
+log = get_logger(__name__)
 router = APIRouter(prefix="/categories", tags=["categories"])
 ERRORS = {
     404: {"model": ErrorResponse},
@@ -30,8 +32,10 @@ async def create_category(body: CategoryIn, db: AsyncSession = Depends(get_db)):
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        log.warning("category_conflict", name=body.name)
         raise Conflict(f"Category '{body.name}' already exists") from None
     await db.refresh(cat)
+    log.info("category_created", category_id=cat.id, name=cat.name)
     return success(CategoryOut.model_validate(cat), "Category created", status_code=201)
 
 
@@ -42,4 +46,5 @@ async def delete_category(category_id: int, db: AsyncSession = Depends(get_db)):
         raise NotFound("Category")
     await db.delete(cat)
     await db.commit()
+    log.info("category_deleted", category_id=category_id)
     return success(None, "Category deleted")

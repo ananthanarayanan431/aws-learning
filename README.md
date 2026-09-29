@@ -59,6 +59,7 @@ Backend settings come from environment variables or `backend/.env` ([config.py](
 | ----------------- | ------------------------------------------------------ | ----------------------------------------- |
 | `ENVIRONMENT`     | `development`                                          | `production` disables `/docs` and `/redoc` |
 | `LOG_LEVEL`       | `INFO`                                                 | Python log level                          |
+| `LOG_JSON`        | unset                                                  | `true`/`false`; default is JSON in production, colored console otherwise |
 | `DATABASE_URL`    | `postgresql+asyncpg://todo:todo@localhost:5433/todo`   | Async SQLAlchemy URL (must use `asyncpg`) |
 | `DB_POOL_SIZE`    | `10`                                                   | Connections per worker                    |
 | `DB_MAX_OVERFLOW` | `10`                                                   | Extra burst connections per worker        |
@@ -109,6 +110,15 @@ All routes are under `/api/v1` and return a `{ success, message, data, meta }` e
 | Tags       | `GET /tags`, `POST /tags`, `DELETE /tags/{id}`                       |
 
 Interactive docs (`/docs`, `/redoc`) are available outside production.
+
+### Logging
+
+Logging uses [structlog](https://www.structlog.org) ([app/logging.py](backend/app/logging.py)). Every record, including uvicorn's and SQLAlchemy's, goes through one pipeline: colored console output in development, one JSON object per line in production (set `LOG_JSON` to override).
+
+- Each request gets an id (taken from the `X-Request-ID` header or generated), returned in the response header and attached to every log line for that request.
+- [app/middleware.py](backend/app/middleware.py) writes one access line per request with method, path, status and duration. `/api/v1/health` is skipped so probes don't flood the logs.
+- Routes log business events with structured fields, for example `task_created task_id=2`. Get a logger with `from app.logging import get_logger; log = get_logger(__name__)`.
+- Unhandled exceptions are logged with a traceback and return a generic 500; details never reach the client.
 
 ### Tests
 

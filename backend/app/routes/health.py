@@ -3,9 +3,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.logging import get_logger
 from app.responses import error, success
 from app.schemas import ErrorResponse, HealthOut, SuccessResponse
 
+log = get_logger(__name__)
 router = APIRouter(prefix="/health", tags=["health"])
 
 
@@ -23,6 +25,7 @@ async def database_health(db: AsyncSession = Depends(get_db)):
     try:
         await db.execute(text("SELECT 1"))
     except Exception as exc:
+        log.error("database_unreachable", error=exc.__class__.__name__, exc_info=True)
         return error(
             503, "DATABASE_UNAVAILABLE", "Database is unreachable", str(exc.__class__.__name__)
         )
