@@ -138,3 +138,18 @@ async def test_request_id_is_generated_and_echoed(client):
     assert r.headers["x-request-id"]
     r = await client.get(f"{API}/health", headers={"X-Request-ID": "abc123"})
     assert r.headers["x-request-id"] == "abc123"
+
+
+async def test_date_range_filter_uses_planned_then_due_date(client):
+    await make_task(client, title="planned", planned_date="2030-05-10")
+    await make_task(client, title="due-only", due_date="2030-05-20")
+    await make_task(client, title="planned-wins", planned_date="2030-06-02", due_date="2030-05-15")
+    await make_task(client, title="undated")
+
+    async def titles(**params):
+        r = await client.get(f"{API}/tasks", params=params)
+        return {t["title"] for t in r.json()["data"]}
+
+    assert await titles(date_from="2030-05-01", date_to="2030-05-31") == {"planned", "due-only"}
+    assert await titles(date_from="2030-06-01", date_to="2030-06-30") == {"planned-wins"}
+    assert await titles(date_from="2030-05-11") == {"due-only", "planned-wins"}

@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,11 +61,17 @@ async def list_tasks(
     tag_id: int | None = None,
     due_before: date | None = None,
     planned_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     search: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    """Lists top-level tasks; subtasks are nested inside their parent."""
+    """Lists top-level tasks; subtasks are nested inside their parent.
+
+    `date_from` / `date_to` (inclusive) filter on the day a task shows up on a calendar:
+    its planned date, or its due date when it has no planned date.
+    """
     q = select(Task).where(Task.parent_id.is_(None))
     if status:
         q = q.where(Task.status == status)
@@ -79,6 +85,12 @@ async def list_tasks(
         q = q.where(Task.due_date <= due_before)
     if planned_date:
         q = q.where(Task.planned_date == planned_date)
+    if date_from or date_to:
+        shown_on = func.coalesce(Task.planned_date, Task.due_date)
+        if date_from:
+            q = q.where(shown_on >= date_from)
+        if date_to:
+            q = q.where(shown_on <= date_to)
     if search:
         q = q.where(Task.title.icontains(search, autoescape=True))
     try:
